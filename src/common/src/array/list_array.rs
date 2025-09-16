@@ -363,8 +363,8 @@ impl ListValue {
         *self.values
     }
 
-    pub fn empty(datatype: &DataType) -> Self {
-        Self::new(datatype.create_array_builder(0).finish())
+    pub fn empty(elem_datatype: &DataType) -> Self {
+        Self::new(elem_datatype.create_array_builder(0).finish())
     }
 
     /// Creates a new `ListValue` from an iterator of `Datum`.
