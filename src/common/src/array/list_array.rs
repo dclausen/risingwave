@@ -546,12 +546,6 @@ impl<'a> ListRef<'a> {
         self.start == self.end
     }
 
-    /// Returns the data type of the elements in the list.
-    #[deprecated]
-    pub fn elem_data_type(&self) -> DataType {
-        self.array.data_type()
-    }
-
     /// Returns the elements in the flattened list.
     pub fn flatten(self) -> ListRef<'a> {
         match self.array {
