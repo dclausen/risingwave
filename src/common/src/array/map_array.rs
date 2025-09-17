@@ -235,7 +235,8 @@ mod scalar {
         /// Returns error if [map invariants](`super::MapArray`) are violated.
         pub fn try_from_entries(entries: ListValue) -> Result<Self, String> {
             // validates list type is valid
-            let _ = MapType::try_from_entries(entries.data_type())?;
+            #[allow(deprecated)]
+            let _ = MapType::try_from_entries(entries.elem_data_type())?;
             let mut keys = HashSet::with_capacity(entries.len());
             let struct_array = entries.into_array();
             for key in struct_array.as_struct().field_at(0).iter() {
@@ -263,8 +264,10 @@ mod scalar {
             }
 
             let len = key.len();
-            let key_type = key.data_type();
-            let value_type = value.data_type();
+            #[allow(deprecated)] // To be refactored.
+            let key_type = key.elem_data_type();
+            #[allow(deprecated)] // To be refactored.
+            let value_type = value.elem_data_type();
             let struct_array = StructArray::new(
                 MapType::struct_type_for_map(key_type, value_type),
                 vec![key.into_array().into_ref(), value.into_array().into_ref()],

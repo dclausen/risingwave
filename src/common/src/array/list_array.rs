@@ -319,21 +319,31 @@ where
     }
 }
 
-// impl FromIterator<ListValue> for ListArray {
-//     fn from_iter<I: IntoIterator<Item = ListValue>>(iter: I) -> Self {
-//         let mut iter = iter.into_iter();
-//         let first = iter.next().expect("empty iterator");
-//         let mut builder = ListArrayBuilder::with_type(
-//             iter.size_hint().0,
-//             DataType::List(Box::new(first.data_type())),
-//         );
-//         builder.append(Some(first.as_scalar_ref()));
-//         for v in iter {
-//             builder.append(Some(v.as_scalar_ref()));
-//         }
-//         builder.finish()
-//     }
-// }
+impl ListArray {
+    /// Creates a new `ListArray` from an iterator of `ListValue`, with the `elem_data_type`
+    /// as the type of the inner element.
+    pub fn from_list_value_iter<I: IntoIterator<Item = ListValue>>(
+        elem_data_type: DataType,
+        iter: I,
+    ) -> Self {
+        let iter = iter.into_iter();
+        let mut builder = ListArrayBuilder::with_type(
+            iter.size_hint().0,
+            DataType::List(Box::new(elem_data_type)),
+        );
+        for v in iter {
+            builder.append(Some(v.as_scalar_ref()));
+        }
+        builder.finish()
+    }
+
+    /// Creates a new `ListArray` from a `ListValue`, with the `elem_data_type` as the type of the inner element.
+    /// Same as `from_list_value_iter` but with only one element.
+    #[inline]
+    pub fn from_list_value(elem_data_type: DataType, list_value: ListValue) -> Self {
+        Self::from_list_value_iter(elem_data_type, [list_value])
+    }
+}
 
 #[derive(Clone, PartialEq, Eq, EstimateSize)]
 pub struct ListValue {
@@ -363,21 +373,35 @@ impl ListValue {
         *self.values
     }
 
-    pub fn empty(elem_datatype: &DataType) -> Self {
-        Self::new(elem_datatype.create_array_builder(0).finish())
+    pub fn empty(elem_data_type: &DataType) -> Self {
+        Self::new(elem_data_type.create_array_builder(0).finish())
     }
 
     /// Creates a new `ListValue` from an iterator of `Datum`.
     pub fn from_datum_iter<T: ToDatumRef>(
-        elem_datatype: &DataType,
+        elem_data_type: &DataType,
         iter: impl IntoIterator<Item = T>,
     ) -> Self {
         let iter = iter.into_iter();
-        let mut builder = elem_datatype.create_array_builder(iter.size_hint().0);
+        let mut builder = elem_data_type.create_array_builder(iter.size_hint().0);
         for datum in iter {
             builder.append(datum);
         }
         Self::new(builder.finish())
+    }
+
+    /// Creates a new `ListValue` from an iterator of `ListValue` to nest them.
+    ///
+    /// Note that `nested_data_type` should be `DataType::List(..)`, i.e., the data type of the list value
+    /// in `iter`.
+    pub fn from_nested_iter(
+        nested_data_type: &DataType,
+        iter: impl IntoIterator<Item = ListValue>,
+    ) -> Self {
+        Self::from_datum_iter(
+            nested_data_type,
+            iter.into_iter().map(|v| Some(ScalarImpl::List(v))),
+        )
     }
 
     /// Returns the length of the list.
@@ -405,8 +429,12 @@ impl ListValue {
     }
 
     /// Returns the data type of the elements in the list.
+    ///
+    /// # Deprecated
+    ///
+    /// This will be deprecated because being able to obtain the type from a scalar is not guaranteed.
     #[deprecated]
-    pub fn data_type(&self) -> DataType {
+    pub fn elem_data_type(&self) -> DataType {
         self.values.data_type()
     }
 
@@ -493,13 +521,6 @@ impl<'a> FromIterator<&'a str> for ListValue {
     }
 }
 
-impl FromIterator<ListValue> for ListValue {
-    fn from_iter<I: IntoIterator<Item = ListValue>>(iter: I) -> Self {
-        // Self::new(iter.into_iter().collect::<ListArray>().into())
-        todo!()
-    }
-}
-
 impl From<ListValue> for ArrayImpl {
     fn from(value: ListValue) -> Self {
         *value.values
@@ -527,7 +548,7 @@ impl<'a> ListRef<'a> {
 
     /// Returns the data type of the elements in the list.
     #[deprecated]
-    pub fn data_type(&self) -> DataType {
+    pub fn elem_data_type(&self) -> DataType {
         self.array.data_type()
     }
 
@@ -1019,16 +1040,23 @@ mod tests {
         }
 
         {
-            let data_type = DataType::List(Box::new(DataType::List(Box::new(DataType::Int32))));
+            let elem_data_type = DataType::List(Box::new(DataType::Int32));
+            let data_type = DataType::List(Box::new(elem_data_type.clone()));
             let mut builder = ListArrayBuilder::with_type(2, data_type);
             let val1 = ListValue::from_iter([1, 2, 3]);
             let val2 = ListValue::from_iter([1, 2, 3]);
-            let list1 = ListValue::from_iter([val1, val2]);
+            let list1 = ListValue::from_datum_iter(
+                &elem_data_type,
+                [Some(ScalarImpl::List(val1)), Some(ScalarImpl::List(val2))],
+            );
             builder.append(Some(list1.as_scalar_ref()));
 
             let val3 = ListValue::from_iter([1, 2, 3]);
             let val4 = ListValue::from_iter([1, 2, 3]);
-            let list2 = ListValue::from_iter([val3, val4]);
+            let list2 = ListValue::from_datum_iter(
+                &elem_data_type,
+                [Some(ScalarImpl::List(val3)), Some(ScalarImpl::List(val4))],
+            );
 
             builder.append(Some(list2.as_scalar_ref()));
 
@@ -1038,23 +1066,6 @@ mod tests {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr.value_at(0).unwrap(), list1.as_scalar_ref());
         }
-    }
-
-    #[test]
-    fn test_list_nested_layout() {
-        use crate::array::*;
-
-        let listarray1 = ListArray::from_iter([Some([1i32, 2]), Some([3, 4])]);
-        let listarray2 = ListArray::from_iter([Some(vec![5, 6, 7]), None, Some(vec![8])]);
-        let listarray3 = ListArray::from_iter([Some([9, 10])]);
-
-        let nestarray = ListArray::from_iter(
-            [listarray1, listarray2, listarray3]
-                .into_iter()
-                .map(|l| ListValue::new(l.into())),
-        );
-        let actual = ListArray::from_protobuf(&nestarray.to_protobuf()).unwrap();
-        assert_eq!(ArrayImpl::List(nestarray), actual);
     }
 
     #[test]

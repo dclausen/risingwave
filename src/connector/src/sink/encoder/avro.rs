@@ -1177,10 +1177,13 @@ mod tests {
 
         test_ok(
             &DataType::List(DataType::List(DataType::Int32.into()).into()),
-            Some(ScalarImpl::List(ListValue::from_iter([
-                ListValue::from_iter([26, 29]),
-                ListValue::from_iter([46, 49]),
-            ]))),
+            Some(ScalarImpl::List(ListValue::from_nested_iter(
+                &DataType::List(DataType::Int32.into()),
+                [
+                    ListValue::from_iter([26, 29]),
+                    ListValue::from_iter([46, 49]),
+                ],
+            ))),
             r#"{
                 "type": "array",
                 "items": {
